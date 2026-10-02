@@ -1,0 +1,309 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import ttest_ind, mannwhitneyu
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+#  1. Импорт и анализ таблиц
+
+df_Data = pd.read_excel(r'C:\Users\User\Датасет.xlsx', sheet_name = "Данные")
+df_Clients = pd.read_excel(r'C:\Users\User\Датасет.xlsx', sheet_name = "Clients")
+df_Region = pd.read_excel(r'C:\Users\User\Датасет.xlsx', sheet_name ="Region_dict")
+#print(df_Data)
+#print(df_Clients)
+#print(df_Region)
+type(df_Region)
+
+# 1.2 Проверка таблиц на наличие пустых значений.
+
+# таблица "Данные" 
+df_Data.isnull().any()
+print(len(df_Data[df_Data['id_client'].isnull()]))
+print(len(df_Data[df_Data['amt_payment'].isnull()]))
+print(len(df_Data[df_Data['dtime_pay'].isnull()]))
+# всегда есть id покупки, но бывают пустоты в id клиента,стоимость и дата
+
+# таблица  "Clients"
+df_Clients.isnull().any()
+print(len(df_Clients[df_Clients['dtime_ad'].isnull()]))
+# всегда есть клиент, но бывают пустоты в дате показа объявления
+
+# таблица регион без пустот
+df_Region.isnull().any()
+
+# мысль по поводу таблицы Данные
+# разве может быть покупка без клиента, стоимости и даты?
+# по идее - не может, соответственно можно удалить 
+
+# раз есть пустота в "дате показа" - значит клиенту не прилетало ни пуш уведомления, ни баннера,
+# но при это он почему то в контрольной или тестовой группе, а такого не может быть,
+# раз не было даты показа
+# по идее - можно удалить 
+
+# После очистки в таблицах не останется строк с пустыми полями.
+# Но все равно будут такие клиенты,  которые не совершали платежи. 
+# Ведь не все клиенты из таблицы клиентов будут присутствовать в таблице платежей.
+# Это видно, объединив таблицы. Для таких клиентов и нужно проставить сумма
+# платежей как 0 с помощью метода fillna()
+
+# 1.3 Исключение из таблиц всех строк, в которых есть нулловые значения.
+# размышления о нуллах выше
+
+df_Data_no_O = df_Data[~((df_Data['id_client'].isnull()) | (df_Data['amt_payment'].isnull()) | (df_Data['dtime_pay'].isnull()))]
+#print (df_Data_no_O)
+
+df_Clients_no_O = df_Clients[~df_Clients['dtime_ad'].isnull()]
+#print (df_Clients_no_O)
+
+
+# 1.4 Исследовать количество торговых точек в каждом городе —
+# построить группировку по количеству в каждом городе
+# и визуализировать с помощью столбчатой диаграммы
+     
+df_reg_city = df_Region.groupby(['city'])['id_trading_point'].count().reset_index().sort_values( by ='id_trading_point' ,  ascending = True)
+#print(df_reg_city)
+
+plt.bar(df_reg_city['city'],df_reg_city['id_trading_point'])
+plt.xticks(rotation = 90)
+plt.title('Кол-во торговых точек по городам')
+plt.xlabel('Город')
+plt.ylabel('Кол-во точек')
+plt.show
+
+
+Объединение таблиц
+
+## 2.1 У одного клиента может быть несколько платежей. 
+## Построить агрегацию таблицы с платежами, где вычислиьб сумму платежей на каждого клиента.
+
+# ОБЪЕДНИЕНИЕ
+df_full = df_Data_no_O
+#print (df_full)
+df_full = df_full.merge(df_Clients_no_O, on = 'id_client', how = 'outer')
+
+# С помощью словаря регионов подтянуть к каждой торговой точке город, в котором она находится.
+df_full = df_full.merge(df_Region, on = 'id_trading_point')
+#print (df_full)
+
+#Заполнить нулями суммы покупок тех клиентов, которые их не совершали.
+df_full['amt_payment'] = df_full['amt_payment'].fillna(0)
+#print (df_full)
+
+# Группировка данных по клиенту, торговой точке и городу
+df_clients_payment = df_full.groupby(['id_client','id_trading_point','city']).agg({'id_order':'count' , 'amt_payment':'sum'}).reset_index()
+#print(df_clients_payment)
+
+# Добавить инфрмацию о группах клиентов:
+df_clients_group = df_clients_payment.merge(df_Clients[['id_client','dtime_ad','nflag_test']], on = 'id_client')
+#print(df_clients_group)
+
+# Флаг платежности:
+df_clients_group['nflag_paid'] = np.where(df_clients_group['amt_payment'] > 0, 1, 0)
+print(df_clients_group)
+
+3. Автоматизация статистических вычислений
+###  3.1 Создать функцию test_calc, которая будет вычислять значение t-критерия (критерия Стьюдента)
+###  и p_value для сравнения средних и с помощью функции print выводить сообщение о том, 
+###  существует ли разница между средними (на основании p_value).
+###  3.2 Аргументы функции: r1 (первая выборка), r2 (вторая выборка),
+###  alpha (уровень значимости, имеет значение по умолчанию 5%).
+
+def test_calc (r1 , r2 , alpha = 0.05):
+    s,p = ttest_ind( r1 , r2 )
+    if p < alpha:
+        print("Гипотеза не подтверждается - средние не равны")
+        print("Разница средних = ", r1.mean() - r2.mean())  
+    else:
+        print ("Гипотеза подтверждается - средние равны")
+    return s,p
+
+### 3.3 Функция mann_whitney_func, которая будет рассчитывать 
+### значение критерия Манна Уитни и p_value для сравнения распределений
+### и выводить сообщение о том, существует ли разница между средними (на основании p_value).
+###  3.4 Аргументы функции: r1 (первая выборка), r2 (вторая выборка),
+###  alpha (уровень значимости, имеет значение по умолчанию 5%)
+
+def mann_whitney_func (r1, r2, alpha = 0.05):
+    s,p = mannwhitneyu(r1, r2)
+    if p < alpha:
+        print ("Распределения не равны")
+    else:
+        print ("Распределения равны")
+    return s,p
+
+4. Чистка неверно заполненных точек 
+#### 4.1  Создан пустой список. 
+#### Запустить цикл по всем торговым точкам и добавить к этому списку все торговые точки
+###  в которых в тестовой или в контрольой группе не было заплачено ни одного рубля ни одним клиентом.
+
+zero_pay = []
+for i in df_clients_group['id_trading_point'].unique():
+    
+    df_loc = df_clients_group[df_clients_group['id_trading_point']==i]
+    sum_control = df_clients_group[(df_clients_group['id_trading_point']==i) & (df_clients_group['nflag_test']==0)]['amt_payment'].sum()
+    sum_test = df_clients_group[(df_clients_group['id_trading_point']==i) & (df_clients_group['nflag_test']==1)]['amt_payment'].sum()
+    if (sum_control == 0) | (sum_test == 0):
+        zero_pay.append(i)
+print(zero_pay)
+
+### 4.2 Создан еще один пустой список. 
+### Запустить цикл по всем торговым точкам и добавить к этому списку все торговые точки,
+### в которых пустует или контрольная, или тестовая группа.
+
+empty_group = []
+for i in df_clients_group['id_trading_point'].unique():
+    control_group = df_clients_group[(df_clients_group['id_trading_point']==i) & (df_clients_group['nflag_test']==0)].count()['id_client']
+    test_group = df_clients_group[(df_clients_group['id_trading_point']==i) & (df_clients_group['nflag_test']==1)].count()['id_client']
+    if (control_group == 0) | (test_group == 0):
+        empty_group.append(i)
+print(empty_group)
+
+5. Расчет общих результатов A/B-теста
+### 5.1 Отбросить все торговые точки, которые были обнаружены в пункте 4.
+### Пояснение: если сумма платежей или количество наблюдений в одной из групп будет равно 0,
+### то мы не сможем сравнить платежи в тестовой и контрольной группах, или такое сравнение будет неверным.
+
+df_clients_group = df_clients_group[~df_clients_group['id_trading_point'].isin(zero_pay + empty_group)]
+#print(df_clients_group)
+
+### 5.2  Изобразить гистограмму платежей, 
+### на которой различными цветами изображены группы «тест» и «контроль».
+
+sns.displot(df_clients_group[df_clients_group['amt_payment'] > 0], x = 'amt_payment', hue = 'nflag_test')
+plt.title('Гистограмма платежей по группам теста и контроля')
+plt.ylabel('Кол-во платежей')
+plt.show()
+
+### 5.3  Применить функцию test_calc и сделать вывод (сравнивить средние платежи)
+test_calc(df_clients_group[df_clients_group['nflag_test'] == 1]['amt_payment'],df_clients_group[df_clients_group['nflag_test'] == 0]['amt_payment'])
+
+### 5.4 Применить функцию test_calc и сделать вывод 
+### (сравниваем конверсию в платеж, то есть r1 и r2
+### — это ряды нулей и единиц, в зависимости от того, оплатил ли что-то клиент или нет).
+test_calc(df_clients_group[df_clients_group['nflag_test'] == 1]['nflag_paid'],df_clients_group[df_clients_group['nflag_test'] == 0]['nflag_paid'])
+
+### 5.5 Применить функцию mann_whitney_func и сделать вывод.
+
+mann_whitney_func(df_clients_group[df_clients_group['nflag_test'] == 1]['amt_payment'],df_clients_group[df_clients_group['nflag_test'] == 0]['amt_payment'])
+#print(s,p)
+
+6 Сегментация результатов A/B-теста
+
+### 6.1 Москва
+### Повторить аналитику из пункта 5 в отношении Москвы. Сделать выводы.
+
+df_Moscow = df_clients_group[df_clients_group['city'] == 'Москва']
+#df_Moscow
+
+s,p = test_calc(df_Moscow[df_Moscow['nflag_test'] == 1]['amt_payment'],df_Moscow[df_Moscow['nflag_test'] == 0]['amt_payment'])
+print(s , p)
+print()
+
+s,p = test_calc(df_Moscow[df_Moscow['nflag_test'] == 1]['nflag_paid'],df_Moscow[df_Moscow['nflag_test'] == 0]['nflag_paid'])
+print(s , p)
+print()
+
+plt.hist(df_Moscow[df_Moscow['nflag_test']==0]['amt_payment'], alpha = .3, label = 'Контрольная группа')
+plt.hist(df_Moscow[df_Moscow['nflag_test']==1]['amt_payment'], alpha = .3, label = 'Тестовая группа')
+plt.ylabel('Сумма платежа')
+plt.title('Гистограмма платежей по группам теста и контроля')
+plt.legend(loc = 'upper right')
+
+plt.show()
+
+
+### 6.2 Санкт-Петербург
+### Повторить аналитику из пункта 5 в отношении Санкт-Петербурга. Сделать выводы.
+df_SPB = df_clients_group[df_clients_group['city'] == 'Санкт-Петербург']
+#df_SPB
+
+s,p = test_calc(df_SPB[df_SPB['nflag_test'] == 1]['amt_payment'],df_SPB[df_SPB['nflag_test'] == 0]['amt_payment'])
+print(s , p)
+print()
+s,p = test_calc(df_SPB[df_SPB['nflag_test'] == 1]['nflag_paid'],df_SPB[df_SPB['nflag_test'] == 0]['nflag_paid'])
+print(s , p)
+print()
+
+plt.hist(df_SPB[df_SPB['nflag_test']==0]['amt_payment'], alpha = .3, label = 'Контрольная группа')
+plt.hist(df_SPB[df_SPB['nflag_test']==1]['amt_payment'], alpha = .3, label = 'Тестовая группа')
+plt.ylabel('Сумма платежа')
+plt.title('Гистограмма платежей по группам теста и контроля')
+plt.legend(loc = 'upper right')
+
+plt.show()
+
+### 6.3 Другие города
+### Запустить цикл по оставшимся городам. Провести такой же анализ.
+
+all_cities = list(df_clients_group['city'].unique())
+all_cities
+
+for i in all_cities:
+    print(i)
+    print()
+    df_city = df_clients_group[df_clients_group['city'] == i]
+### еще убран стобец с нулевыми значениями
+    sns.displot(df_city[df_city['amt_payment']>0], x = 'amt_payment', hue = 'nflag_test')
+    plt.show()
+
+    test_calc(df_city[df_city['nflag_test'] == 1]['amt_payment'],df_city[df_city['nflag_test'] == 0]['amt_payment'])
+    test_calc(df_city[df_city['nflag_test'] == 1]['nflag_paid'],df_city[df_city['nflag_test'] == 0]['nflag_paid'])
+### еще убран стобец с нулевыми значениями
+    for j in df_city['id_trading_point'].unique():
+        df_loc = df_city[df_city['id_trading_point']==j]
+        print("Торговая точка = ", j)
+        sns.displot(df_loc[df_loc['amt_payment']>0], x = 'amt_payment', hue = 'nflag_test')
+        plt.title('Гистограмма платежей по группам теста и контроля')
+        plt.ylabel('Сумма платежа')
+        plt.show()
+
+7 Отчет по A/B-тесту
+
+### 7.1 Создан пустой датафрейм. Запущен цикл по всем городам и торговым точкам.
+
+df_result = pd.DataFrame()
+
+for i in df_clients_group['city'].unique():
+    df_loc = df_clients_group[df_clients_group['city']==i]
+
+    for j in df_loc['id_trading_point'].unique():
+
+        df_loc_f = df_loc[df_loc['id_trading_point']==j]
+
+        count_test = len(df_loc_f[df_loc_f['nflag_test']==1])
+        count_control = len(df_loc_f[df_loc_f['nflag_test']==0])
+        count_all = count_test + count_control
+        sigma_test = df_loc_f[df_loc_f['nflag_test']==1]['amt_payment'].std()
+        sigma_control = df_loc_f[df_loc_f['nflag_test']==0]['amt_payment'].std()
+
+        avg_test = np.mean(df_loc_f[df_loc_f['nflag_test']==1]['amt_payment'])
+        avg_control = np.mean(df_loc_f[df_loc_f['nflag_test']==0]['amt_payment'])
+        diff = avg_test - avg_control
+
+        s_a,p_a = test_calc(df_loc_f[df_loc_f['nflag_test']==1]['amt_payment'], df_loc_f[df_loc_f['nflag_test']==0]['amt_payment'])
+        s_p,p_p = test_calc(df_loc_f[df_loc_f['nflag_test']==1]['nflag_paid'], df_loc_f[df_loc_f['nflag_test']==0]['nflag_paid'])
+        m_s, m_p = mann_whitney_func(df_loc_f[df_loc_f['nflag_test']==1]['amt_payment'], df_loc_f[df_loc_f['nflag_test']==0]['amt_payment'])
+
+        df_result = df_result._append({ 'city':i, 'id_trading_point':j
+                                        , 'count_test':count_test, 'count_control':count_control, 'count_all':count_all
+                                        , 'avg_test':avg_test, 'avg_control':avg_control
+                                        , 'sigma_test':sigma_test, 'sigma_control':sigma_control
+                                        , 'diff':diff , 'abs_ttest_s':s_a, 'abs_ttest_p':p_a, 'pr_ttest_s':s_p \
+                                        }, ignore_index=True)
+
+df_result['nflag_diff'] = np.where((df_result['abs_ttest_p'] < .05) & (df_result['diff'] > 0), 'Positive'
+, np.where((df_result['abs_ttest_p'] < .05) & (df_result['diff'] < 0), 'Negative', 'No diff'))
+df_result['percent_count'] = (df_result['count_all'] / df_result['count_all'].sum())
+
+df_result
+
+
+8 Калькулятор А/B теста
+
+writer = pd.ExcelWriter('Калькулятор АБ теста.xlsx', engine='xlsxwriter')
+
+df_result[df_result['nflag_diff']=='Positive'].to_excel(writer, sheet_name='Успешные ТТ', index = False)
+df_result[df_result['nflag_diff']=='Negative'].to_excel(writer, sheet_name='Неуспешные ТТ', index = False)
+df_result[df_result['nflag_diff']=='No diff'].to_excel(writer, sheet_name='Нет разницы', index = False)
+
+writer.close()
